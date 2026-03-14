@@ -45,6 +45,8 @@ htmlcov/
 
 # Logs
 *.log
+logs/
+!logs/.gitkeep
 
 # Certificados AFIP (IMPORTANTE: NO commitear)
 certs/*.crt

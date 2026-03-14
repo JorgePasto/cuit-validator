@@ -15,7 +15,7 @@
     ```
     (controller  con metodo get - service con metodo get - connector con servicio de auth y get)
     Servicio que se conecte con los servicios de AFIP https://aws.afip.gov.ar/sr-padron/webservices para consultas y https://wsaa.afip.gov.ar/ws/services/LoginCms para autenticación.
-    El cual consuma el padron Consulta a Padrón Alcance 10 (documentación https://www.afip.gob.ar/ws/ws_sr_padron_a10/manual_ws_sr_padron_a10_v1.2.pdf )
+    El cual consuma el padron Consulta a Padrón Alcance 13 (documentación https://www.afip.gob.ar/ws/ws-padron-a13/manual-ws-sr-padron-a13-v1.3.pdf )
     Con previa autenticación en serivcio WSAA https://www.afip.gob.ar/ws/documentacion/wsaa.asp con su respectivo manual https://www.afip.gob.ar/ws/WSAA/WSAAmanualDev.pdf
     La arquitectura de comunicación esta detallada en https://www.afip.gob.ar/ws/documentacion/arquitectura-general.asp y https://www.afip.gob.ar/ws/documentacion/catalogo.asp
 
@@ -36,3 +36,16 @@
     ## Consideraciones Funcionales
     - basarte en /Users/jpastorino/git/people-arca-connector para comportamiento de servicio de consulta de datos. Solo consideraciones necesarias
     - basarte en /Users/jpastorino/git/token-arca-admin para comportamiento de servicio de obtención de token. Solo consideraciones necesarias
+
+    ---
+    ## Consideraciones Documentación
+
+    podrias generarme un archivo tutorial-token.md que me guie en generar el certificado correctamente para el servicio que usamos
+    https://www.afip.gob.ar/ws/WSAA/Especificacion_Tecnica_WSAA_1.2.2.pdf
+    https://www.afip.gob.ar/ws/WSAA/wsaa_asociar_certificado_a_wsn_produccion.pdf
+    https://www.afip.gob.ar/ws/WSAA/wsaa_obtener_certificado_produccion.pdf
+    https://www.afip.gob.ar/ws/WSAA/WSAAmanualDev.pdf
+
+    ---
+    ## Nuevo endpoint
+      Por mi nivel de CLave en AFIP no puedo consultar el servicio desarrollado, podrias analizar https://www.afip.gob.ar/ws/ws-padron-a13/manual-ws-sr-padron-a13-v1.3.pdf y ver si este servicio sirve, en caso de serlo armar plan de adecuación del servicio actual para poder implementar este cambio

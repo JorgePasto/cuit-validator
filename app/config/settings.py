@@ -17,9 +17,9 @@ class Settings(BaseSettings):
     WSAA_URL_TEST: str = "https://wsaahomo.afip.gov.ar/ws/services/LoginCms"
     WSAA_URL_PROD: str = "https://wsaa.afip.gov.ar/ws/services/LoginCms"
     
-    # URLs AFIP Padrón A10 (Consulta)
-    PADRON_URL_TEST: str = "https://awshomo.afip.gov.ar/sr-padron/webservices/personaServiceA10"
-    PADRON_URL_PROD: str = "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA10"
+    # URLs AFIP Padrón A13 (Consulta)
+    PADRON_URL_TEST: str = "https://awshomo.afip.gov.ar/sr-padron/webservices/personaServiceA13"
+    PADRON_URL_PROD: str = "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA13"
     
     # Certificados AFIP
     AFIP_CERT_PATH: Path
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     
     @property
     def padron_url(self) -> str:
-        """Retorna la URL del Padrón A10 según el ambiente."""
+        """Retorna la URL del Padrón A13 según el ambiente."""
         return self.PADRON_URL_TEST if self.ENVIRONMENT == "TEST" else self.PADRON_URL_PROD
     
     @property

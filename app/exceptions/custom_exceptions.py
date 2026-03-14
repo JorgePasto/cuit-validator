@@ -5,7 +5,18 @@ Excepciones personalizadas para el microservicio.
 
 class AFIPBaseException(Exception):
     """Excepción base para errores relacionados con AFIP."""
-    pass
+    
+    def __init__(self, message: str = None, details: dict = None):
+        """
+        Inicializa la excepción con mensaje y detalles opcionales.
+        
+        Args:
+            message: Mensaje de error principal
+            details: Diccionario con información adicional del error
+        """
+        self.message = message or self.__class__.__doc__
+        self.details = details or {}
+        super().__init__(self.message)
 
 
 class AFIPServiceException(AFIPBaseException):

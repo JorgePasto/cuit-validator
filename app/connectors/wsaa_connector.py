@@ -19,6 +19,7 @@ from app.exceptions.custom_exceptions import (
     XMLParseException
 )
 from app.models.afip_models import TokenData
+from app.utils.afip_logger import afip_logger
 from app.utils.crypto_utils import sign_and_encode
 from app.utils.xml_utils import (
     build_login_ticket_request,
@@ -45,10 +46,10 @@ class WSAAConnector:
         """Inicializa el connector con configuración desde Settings."""
         self.settings = Settings()
         self.wsaa_url = self.settings.wsaa_url
-        self.cert_path = self.settings.afip_cert_path
-        self.key_path = self.settings.afip_key_path
-        self.key_passphrase = self.settings.afip_key_passphrase
-        self.service_name = "ws_sr_padron_a10"
+        self.cert_path = self.settings.AFIP_CERT_PATH
+        self.key_path = self.settings.AFIP_KEY_PATH
+        self.key_passphrase = self.settings.AFIP_KEY_PASSPHRASE
+        self.service_name = "ws_sr_padron_a13"
 
         # Validar certificados al inicializar
         try:
@@ -144,10 +145,23 @@ class WSAAConnector:
             XMLParseException: Error parseando respuesta
             AFIPServiceException: Error HTTP
         """
+        # Generar correlation ID para trazabilidad
+        correlation_id = afip_logger.generate_correlation_id()
+        
         headers = {
             "Content-Type": "text/xml; charset=utf-8",
             "SOAPAction": ""  # WSAA no requiere SOAPAction específico
         }
+
+        # LOG REQUEST
+        start_time = afip_logger.log_soap_request(
+            correlation_id=correlation_id,
+            service="WSAA",
+            operation="loginCms",
+            soap_envelope=soap_request,
+            url=self.wsaa_url,
+            headers=headers
+        )
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
@@ -158,6 +172,19 @@ class WSAAConnector:
                 )
 
                 logger.debug(f"WSAA response status: {response.status_code}")
+                
+                # LOG RESPONSE
+                response_headers = dict(response.headers)
+                afip_logger.log_soap_response(
+                    correlation_id=correlation_id,
+                    service="WSAA",
+                    operation="loginCms",
+                    start_time=start_time,
+                    status_code=response.status_code,
+                    soap_response=response.text,
+                    headers=response_headers,
+                    error=None if response.status_code == 200 else f"HTTP {response.status_code}"
+                )
 
                 # Validar status code
                 if response.status_code != 200:
@@ -165,6 +192,70 @@ class WSAAConnector:
                     fault_message = extract_soap_fault(response.text)
                     if fault_message:
                         logger.error(f"SOAP Fault received: {fault_message}")
+                        
+                        # Detectar error de token ya existente (alreadyAuthenticated)
+                        if "coe.alreadyAuthenticated" in fault_message or "ya posee un TA valido" in fault_message:
+                            helpful_message = (
+                                f"AFIP authentication failed: {fault_message}\n\n"
+                                "CAUSA: AFIP ya emitió un token válido para este certificado y no permite solicitar uno nuevo.\n"
+                                "SOLUCIÓN:\n"
+                                "1. Esperar unos minutos para que el token existente en AFIP expire (o que el sistema lo detecte)\n"
+                                "2. El token típicamente expira después de ~12 horas\n"
+                                "3. Verificar que el sistema de caché local esté funcionando correctamente\n"
+                                "4. Si el problema persiste, el certificado puede estar siendo usado por otro sistema/proceso"
+                            )
+                            raise AuthenticationException(
+                                helpful_message,
+                                details={
+                                    "status_code": response.status_code,
+                                    "fault": fault_message,
+                                    "solution": "Wait for existing token to expire or check if certificate is being used elsewhere",
+                                    "retry_recommended": True,
+                                    "retry_wait_seconds": 300  # 5 minutos
+                                }
+                            )
+                        
+                        # Detectar error de certificado no autorizado
+                        if "coe.notAuthorized" in fault_message or "Computador no autorizado" in fault_message:
+                            helpful_message = (
+                                f"AFIP authentication failed: {fault_message}\n\n"
+                                "SOLUCIÓN: Tu certificado no está asociado al servicio 'ws_sr_padron_a13' en AFIP.\n"
+                                "Debes seguir estos pasos:\n"
+                                "1. Ir a https://auth.afip.gob.ar/contribuyente_/acceso.xhtml\n"
+                                "2. Ingresar con Clave Fiscal (nivel 3 requerido)\n"
+                                "3. Administrador de Relaciones de Clave Fiscal > Alta de Relación\n"
+                                "4. Buscar 'ws_sr_padron_a13' y asociar tu certificado como Computador Fiscal\n"
+                                "5. Consultar el TUTORIAL-CERTIFICADOS-AFIP.md para más detalles"
+                            )
+                            raise AuthenticationException(
+                                helpful_message,
+                                details={
+                                    "status_code": response.status_code,
+                                    "fault": fault_message,
+                                    "solution": "Certificate not associated with ws_sr_padron_a13 service in AFIP portal"
+                                }
+                            )
+                        
+                        # Detectar error de expirationTime inválido
+                        if "expirationTime.invalid" in fault_message:
+                            helpful_message = (
+                                f"AFIP authentication failed: {fault_message}\n\n"
+                                "SOLUCIÓN: El timestamp de expiración es inválido.\n"
+                                "Posibles causas:\n"
+                                "1. Expiración configurada en más de 24 horas\n"
+                                "2. Formato de timestamp incorrecto (debe incluir timezone)\n"
+                                "3. Reloj del sistema desincronizado"
+                            )
+                            raise AuthenticationException(
+                                helpful_message,
+                                details={
+                                    "status_code": response.status_code,
+                                    "fault": fault_message,
+                                    "solution": "Fix timestamp format or expiration time"
+                                }
+                            )
+                        
+                        # Error genérico de autenticación
                         raise AuthenticationException(
                             f"AFIP authentication failed: {fault_message}",
                             details={

@@ -8,9 +8,13 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
-from app.cache.token_cache import get_token_cache_stats
+from app.cache.token_cache import (
+    get_token_cache_stats,
+    clear_token_cache,
+    invalidate_cached_token
+)
 from app.exceptions.custom_exceptions import (
     AFIPBaseException,
     AFIPServiceException,
@@ -48,8 +52,8 @@ async def health_check():
     settings = Settings()
 
     return HealthResponse(
-        status="OK",
-        environment=settings.environment,
+        status="ok",
+        environment=settings.ENVIRONMENT,
         timestamp=datetime.utcnow()
     )
 
@@ -69,10 +73,10 @@ async def health_check():
 )
 async def get_cuit(
     cuit: str = Path(..., description="CUIT a consultar (11 dígitos, con o sin guiones)", example="20123456789"),
-    service: CUITService = None
+    service: CUITService = Depends(get_service)
 ) -> PersonaResponse:
     """
-    Consulta información de un CUIT en AFIP Padrón A10.
+    Consulta información de un CUIT en AFIP Padrón A13.
 
     Retorna datos del contribuyente:
     - Tipo de persona (física/jurídica)
@@ -83,10 +87,6 @@ async def get_cuit(
     **Ejemplo de CUIT válido**: `20-12345678-9` o `20123456789`
     """
     try:
-        # Obtener servicio (dependency injection manual si no se inyectó)
-        if service is None:
-            service = get_service()
-
         logger.info(f"Received request for CUIT: {cuit}")
 
         # Consultar CUIT
@@ -102,7 +102,7 @@ async def get_cuit(
                 detail=str(e),
                 error_code="INVALID_CUIT_FORMAT",
                 timestamp=datetime.utcnow()
-            ).dict()
+            ).model_dump(mode='json')
         )
 
     except CUITNotFoundException as e:
@@ -113,18 +113,22 @@ async def get_cuit(
                 detail=str(e),
                 error_code="CUIT_NOT_FOUND",
                 timestamp=datetime.utcnow()
-            ).dict()
+            ).model_dump(mode='json')
         )
 
     except AuthenticationException as e:
         logger.error(f"Authentication failed for CUIT {cuit}: {str(e)}")
+        
+        # Incluir el mensaje completo con instrucciones de solución
+        error_message = str(e)
+        
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ErrorResponse(
-                detail="Failed to authenticate with AFIP",
+                detail=error_message,
                 error_code="AUTHENTICATION_FAILED",
                 timestamp=datetime.utcnow()
-            ).dict()
+            ).model_dump(mode='json')
         )
 
     except AFIPServiceException as e:
@@ -135,7 +139,7 @@ async def get_cuit(
                 detail="AFIP service is temporarily unavailable",
                 error_code="SERVICE_UNAVAILABLE",
                 timestamp=datetime.utcnow()
-            ).dict()
+            ).model_dump(mode='json')
         )
 
     except AFIPBaseException as e:
@@ -146,7 +150,7 @@ async def get_cuit(
                 detail=str(e),
                 error_code="AFIP_ERROR",
                 timestamp=datetime.utcnow()
-            ).dict()
+            ).model_dump(mode='json')
         )
 
     except Exception as e:
@@ -157,7 +161,7 @@ async def get_cuit(
                 detail="Internal server error",
                 error_code="INTERNAL_ERROR",
                 timestamp=datetime.utcnow()
-            ).dict()
+            ).model_dump(mode='json')
         )
 
 
@@ -176,10 +180,10 @@ async def get_cuit(
 )
 async def validate_cuit_post(
     request: CUITRequest,
-    service: CUITService = None
+    service: CUITService = Depends(get_service)
 ) -> PersonaResponse:
     """
-    Consulta información de un CUIT en AFIP Padrón A10 (método POST).
+    Consulta información de un CUIT en AFIP Padrón A13 (método POST).
 
     Versión POST del endpoint de consulta, acepta JSON body con el CUIT.
 
@@ -226,5 +230,116 @@ async def get_cache_stats():
                 detail="Failed to retrieve cache stats",
                 error_code="CACHE_ERROR",
                 timestamp=datetime.utcnow()
-            ).dict()
+            ).model_dump(mode='json')
+        )
+
+
+@router.delete(
+    "/cache/clear",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    tags=["admin"]
+)
+async def clear_cache():
+    """
+    Limpia TODO el cache de tokens WSAA.
+    
+    **⚠️ ADVERTENCIA**: Esta operación elimina todos los tokens cacheados.
+    El próximo request solicitará nuevos tokens a AFIP.
+    
+    **Casos de uso**:
+    - Resolver error "alreadyAuthenticated" de AFIP
+    - Forzar renovación de todos los tokens
+    - Debugging/troubleshooting
+    
+    Returns:
+        Mensaje de confirmación con estadísticas previas
+    """
+    try:
+        # Obtener estadísticas antes de limpiar
+        stats_before = get_token_cache_stats()
+        
+        # Limpiar cache
+        clear_token_cache()
+        logger.info("Token cache cleared manually via admin endpoint")
+        
+        return {
+            "status": "ok",
+            "message": "Token cache cleared successfully",
+            "tokens_removed": stats_before.get("size", 0),
+            "services_cleared": stats_before.get("services", []),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error clearing cache: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=ErrorResponse(
+                detail="Failed to clear cache",
+                error_code="CACHE_CLEAR_ERROR",
+                timestamp=datetime.utcnow()
+            ).model_dump(mode='json')
+        )
+
+
+@router.delete(
+    "/cache/invalidate/{service_name}",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    tags=["admin"]
+)
+async def invalidate_token(
+    service_name: str = Path(
+        ...,
+        description="Nombre del servicio AFIP (ej: ws_sr_padron_a13)",
+        example="ws_sr_padron_a13"
+    )
+):
+    """
+    Invalida el token cacheado para un servicio específico.
+    
+    **Casos de uso**:
+    - Resolver error "alreadyAuthenticated" para un servicio específico
+    - Forzar renovación de token para un servicio
+    - Invalidar token sin afectar otros servicios
+    
+    Args:
+        service_name: Nombre del servicio AFIP (ej: ws_sr_padron_a13)
+    
+    Returns:
+        Mensaje de confirmación
+    """
+    try:
+        # Verificar si el token existe
+        stats = get_token_cache_stats()
+        services = stats.get("services", [])
+        
+        if service_name not in services:
+            logger.warning(f"Attempted to invalidate non-existent token: {service_name}")
+            return {
+                "status": "ok",
+                "message": f"No token found for service '{service_name}' (already cleared or never cached)",
+                "service": service_name,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        
+        # Invalidar token específico
+        invalidate_cached_token(service_name)
+        logger.info(f"Token invalidated for service: {service_name}")
+        
+        return {
+            "status": "ok",
+            "message": f"Token for service '{service_name}' invalidated successfully",
+            "service": service_name,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error invalidating token for {service_name}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=ErrorResponse(
+                detail=f"Failed to invalidate token for service '{service_name}'",
+                error_code="TOKEN_INVALIDATION_ERROR",
+                timestamp=datetime.utcnow()
+            ).model_dump(mode='json')
         )

@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     try:
         # Validar configuración
         settings = Settings()
-        logger.info(f"Environment: {settings.environment}")
+        logger.info(f"Environment: {settings.ENVIRONMENT}")
         logger.info(f"WSAA URL: {settings.wsaa_url}")
         logger.info(f"Padrón URL: {settings.padron_url}")
 
@@ -140,7 +140,7 @@ async def afip_exception_handler(request: Request, exc: AFIPBaseException):
 
     return JSONResponse(
         status_code=status_code,
-        content=error_response.dict()
+        content=error_response.model_dump(mode='json')
     )
 
 
@@ -163,7 +163,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content=error_response.dict()
+        content=error_response.model_dump(mode='json')
     )
 
 
@@ -186,7 +186,7 @@ async def general_exception_handler(request: Request, exc: Exception):
 
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content=error_response.dict()
+        content=error_response.model_dump(mode='json')
     )
 
 
@@ -233,6 +233,6 @@ if __name__ == "__main__":
         "app.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=settings.environment == "TEST",  # Hot reload solo en TEST
+        reload=settings.ENVIRONMENT == "TEST",  # Hot reload solo en TEST
         log_level="info"
     )

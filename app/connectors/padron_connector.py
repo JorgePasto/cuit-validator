@@ -1,7 +1,7 @@
 """
-Connector para AFIP Padrón A10 - Consulta de datos de contribuyentes.
+Connector para AFIP Padrón A13 - Consulta de datos de contribuyentes.
 
-Este módulo maneja la comunicación con el Web Service sr-padron A10 de AFIP
+Este módulo maneja la comunicación con el Web Service sr-padron A13 de AFIP
 para obtener información de contribuyentes (nombres y domicilios fiscales).
 """
 
@@ -11,6 +11,7 @@ from typing import Optional
 from zeep import Client
 from zeep.exceptions import Fault as ZeepFault, TransportError, XMLParseError
 from zeep.transports import Transport
+from zeep.plugins import HistoryPlugin
 
 from app.config.settings import Settings
 from app.exceptions.custom_exceptions import (
@@ -20,13 +21,14 @@ from app.exceptions.custom_exceptions import (
 )
 from app.models.afip_models import TokenData
 from app.models.responses import DomicilioFiscal, PersonaResponse
+from app.utils.afip_logger import afip_logger
 
 logger = logging.getLogger(__name__)
 
 
 class PadronConnector:
     """
-    Connector para AFIP Padrón A10 - consulta datos de contribuyentes.
+    Connector para AFIP Padrón A13 - consulta datos de contribuyentes.
 
     Utiliza Zeep (cliente SOAP Python) para consumir el WSDL del servicio.
 
@@ -44,6 +46,9 @@ class PadronConnector:
 
         # Configurar transporte con timeout
         self.transport = Transport(timeout=30)
+        
+        # Plugin para capturar requests/responses SOAP
+        self.history = HistoryPlugin()
 
         # Cliente Zeep (lazy initialization)
         self._client: Optional[Client] = None
@@ -60,8 +65,12 @@ class PadronConnector:
         """
         if self._client is None:
             try:
-                logger.info(f"Initializing Zeep client for Padrón A10: {self.wsdl_url}")
-                self._client = Client(wsdl=self.wsdl_url, transport=self.transport)
+                logger.info(f"Initializing Zeep client for Padrón A13: {self.wsdl_url}")
+                self._client = Client(
+                    wsdl=self.wsdl_url, 
+                    transport=self.transport,
+                    plugins=[self.history]  # Agregar plugin para capturar SOAP
+                )
                 logger.debug("Zeep client initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize Zeep client: {str(e)}")
@@ -96,28 +105,87 @@ class PadronConnector:
             # Limpiar CUIT (remover guiones si existen)
             clean_cuit = cuit.replace("-", "").strip()
 
-            logger.info(f"Querying Padrón A10 for CUIT: {clean_cuit}")
+            logger.info(f"Querying Padrón A13 for CUIT: {clean_cuit}")
 
             # Obtener cliente Zeep
             client = self._get_client()
 
             # Preparar parámetros del request
-            # Basado en el WSDL de Padrón A10, el método es getPersona
+            # Basado en el WSDL de Padrón A13, el método es getPersona_v2
             request_params = {
                 "token": token_data.token,
                 "sign": token_data.sign,
-                "cuitRepresentada": clean_cuit  # CUIT a consultar
+                "cuitRepresentada": clean_cuit,  # CUIT del certificado (quien consulta)
+                "idPersona": clean_cuit           # CUIT a consultar (para autoconsulta, ambos son iguales)
             }
 
             logger.debug(f"Request params: {request_params}")
 
+            # Generar correlation ID para trazabilidad
+            correlation_id = afip_logger.generate_correlation_id()
+            
+            # LOG REQUEST
+            from datetime import datetime
+            start_time = afip_logger.log_request(
+                correlation_id=correlation_id,
+                service="PADRON_A13",
+                operation="getPersona_v2",
+                request_data={
+                    "cuitRepresentada": clean_cuit,
+                    "idPersona": clean_cuit,
+                    "token_length": len(token_data.token),
+                    "sign_length": len(token_data.sign)
+                },
+                url=self.padron_url
+            )
+
             # Llamar al servicio SOAP
             try:
-                # Método del WSDL: getPersona o similar (ajustar según WSDL real)
-                # Nota: Verificar nombre exacto del método en WSDL
-                response = client.service.getPersona(**request_params)
+                # Método del WSDL A13: getPersona_v2 (verificar nombre exacto en WSDL durante testing)
+                response = client.service.getPersona_v2(**request_params)
 
                 logger.debug(f"Response received for CUIT {clean_cuit}")
+                
+                # LOG RESPONSE (exitoso)
+                # Capturar SOAP request/response usando HistoryPlugin
+                soap_request = None
+                soap_response = None
+                if self.history.last_sent:
+                    soap_request = self.history.last_sent.get("envelope")
+                if self.history.last_received:
+                    soap_response = self.history.last_received.get("envelope")
+                
+                # Loggear SOAP completo si está disponible
+                if soap_request:
+                    from lxml import etree
+                    soap_request_str = etree.tostring(soap_request, encoding='unicode', pretty_print=True)
+                    logger.debug(f"[{correlation_id}] SOAP Request:\n{soap_request_str}")
+                    
+                if soap_response:
+                    from lxml import etree
+                    soap_response_str = etree.tostring(soap_response, encoding='unicode', pretty_print=True)
+                    logger.debug(f"[{correlation_id}] SOAP Response:\n{soap_response_str}")
+                    
+                    afip_logger.log_soap_response(
+                        correlation_id=correlation_id,
+                        service="PADRON_A13",
+                        operation="getPersona_v2",
+                        start_time=start_time,
+                        status_code=200,
+                        soap_response=soap_response_str,
+                        error=None
+                    )
+                else:
+                    # Fallback si no hay history
+                    afip_logger.log_response(
+                        correlation_id=correlation_id,
+                        service="PADRON_A13",
+                        operation="getPersona_v2",
+                        start_time=start_time,
+                        status_code=200,
+                        response_data={"status": "success", "cuit": clean_cuit},
+                        error=None
+                    )
 
                 # Parsear respuesta a PersonaResponse
                 persona_response = self._parse_persona_response(clean_cuit, response)
@@ -128,6 +196,17 @@ class PadronConnector:
                 # SOAP Fault - puede indicar CUIT no encontrado
                 fault_message = str(e)
                 logger.warning(f"SOAP Fault for CUIT {clean_cuit}: {fault_message}")
+                
+                # LOG ERROR RESPONSE
+                afip_logger.log_response(
+                    correlation_id=correlation_id,
+                    service="PADRON_A13",
+                    operation="getPersona_v2",
+                    start_time=start_time,
+                    status_code=500,
+                    response_data={"fault": fault_message, "cuit": clean_cuit},
+                    error=fault_message
+                )
 
                 # Verificar si es un error de "no encontrado"
                 if any(keyword in fault_message.lower() for keyword in ["no encontrado", "not found", "inexistente"]):
@@ -143,6 +222,18 @@ class PadronConnector:
 
             except TransportError as e:
                 logger.error(f"Transport error querying CUIT {clean_cuit}: {str(e)}")
+                
+                # LOG ERROR RESPONSE
+                afip_logger.log_response(
+                    correlation_id=correlation_id,
+                    service="PADRON_A13",
+                    operation="getPersona_v2",
+                    start_time=start_time,
+                    status_code=502,
+                    response_data={"error": str(e), "cuit": clean_cuit},
+                    error=f"Transport error: {str(e)}"
+                )
+                
                 raise AFIPServiceException(
                     f"Network error calling AFIP Padrón: {str(e)}",
                     details={"cuit": clean_cuit, "error": str(e)}
@@ -150,6 +241,18 @@ class PadronConnector:
 
             except XMLParseError as e:
                 logger.error(f"XML parse error for CUIT {clean_cuit}: {str(e)}")
+                
+                # LOG ERROR RESPONSE
+                afip_logger.log_response(
+                    correlation_id=correlation_id,
+                    service="PADRON_A13",
+                    operation="getPersona_v2",
+                    start_time=start_time,
+                    status_code=500,
+                    response_data={"error": str(e), "cuit": clean_cuit},
+                    error=f"XML parse error: {str(e)}"
+                )
+                
                 raise XMLParseException(
                     f"Failed to parse AFIP response: {str(e)}",
                     details={"cuit": clean_cuit, "error": str(e)}
@@ -166,11 +269,18 @@ class PadronConnector:
 
     def _parse_persona_response(self, cuit: str, response: dict) -> PersonaResponse:
         """
-        Parsea la respuesta del servicio Padrón A10 a PersonaResponse.
+        Parsea la respuesta del servicio Padrón A13 a PersonaResponse.
 
-        La estructura de respuesta puede variar, pero generalmente incluye:
+        La estructura de respuesta de A13 incluye datos adicionales vs A10:
         - datosGenerales: nombre, apellido, razon social, tipo persona
         - domicilioFiscal: dirección, localidad, provincia, código postal
+        - actividades: lista de actividades económicas (NO se expone en API)
+        - impuestos: lista de impuestos inscriptos (NO se expone en API)
+        - categoriaMonotributo: categoría si corresponde (NO se expone en API)
+
+        NOTA: Esta función mantiene el contrato del API sin cambios. Los campos adicionales
+        de A13 se loggean completamente (ver _log_full_a13_response) pero no se exponen
+        en PersonaResponse para mantener backward compatibility con consumers.
 
         Args:
             cuit: CUIT consultado
@@ -225,6 +335,9 @@ class PadronConnector:
                     codigo_postal=getattr(domicilio_fiscal_data, "codPostal", None)
                 )
 
+            # Loggear el response completo de A13 para debugging/auditoría
+            self._log_full_a13_response(cuit, response)
+
             # Construir PersonaResponse
             persona_response = PersonaResponse(
                 cuit=cuit,
@@ -247,6 +360,57 @@ class PadronConnector:
             raise XMLParseException(
                 f"Failed to parse persona response: {str(e)}",
                 details={"cuit": cuit, "error": str(e), "response": str(response)[:500]}
+            )
+
+    def _log_full_a13_response(self, cuit: str, response) -> None:
+        """
+        Loggea el response completo de A13 para debugging y auditoría.
+
+        A13 devuelve información adicional vs A10 (actividades, impuestos, monotributo, etc.)
+        que no se expone en el API para mantener el contrato. Este método registra
+        toda la respuesta para propósitos de debugging y auditoría futura.
+
+        Args:
+            cuit: CUIT consultado
+            response: Response object completo de Zeep (objeto con estructura compleja)
+
+        Returns:
+            None (solo loggea, no retorna valor)
+
+        Notas:
+            - Usa serialize_object de zeep.helpers para convertir response a dict
+            - Loggea a nivel INFO con estructura JSON en campo extra
+            - Loggea a nivel DEBUG con formato pretty-print para lectura humana
+            - Errores de serialización/logging NO interrumpen el flujo (se capturan)
+        """
+        try:
+            import json
+            from zeep.helpers import serialize_object
+            
+            # Convertir response de Zeep a dict serializable
+            response_dict = serialize_object(response)
+            
+            # Log estructurado a nivel INFO (para agregadores de logs)
+            logger.info(
+                f"A13 Full Response for CUIT {cuit}",
+                extra={
+                    "cuit": cuit,
+                    "service": "ws_sr_padron_a13",
+                    "response_data": response_dict
+                }
+            )
+            
+            # Log pretty-print a nivel DEBUG (para debugging local)
+            logger.debug(
+                f"A13 Response Detail for CUIT {cuit}:\n"
+                f"{json.dumps(response_dict, indent=2, ensure_ascii=False, default=str)}"
+            )
+            
+        except Exception as e:
+            # No interrumpir el flujo principal si falla el logging
+            logger.warning(
+                f"Could not log full A13 response for CUIT {cuit}: {str(e)}",
+                exc_info=True
             )
 
 

@@ -27,7 +27,7 @@ class DomicilioFiscal(BaseModel):
 
 
 class PersonaResponse(BaseModel):
-    """Respuesta de consulta de CUIT en Padrón A10."""
+    """Respuesta de consulta de CUIT en Padrón A13."""
     
     cuit: str = Field(..., description="CUIT consultado")
     tipo_persona: Literal["FISICA", "JURIDICA"] = Field(..., description="Tipo de persona")

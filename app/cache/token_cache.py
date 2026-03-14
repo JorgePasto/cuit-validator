@@ -43,7 +43,7 @@ class TokenCache:
         Obtiene el token cacheado para un servicio específico.
 
         Args:
-            service: Nombre del servicio AFIP (ej: ws_sr_padron_a10)
+            service: Nombre del servicio AFIP (ej: ws_sr_padron_a13)
 
         Returns:
             TokenData si existe y es válido, None si no existe o expiró

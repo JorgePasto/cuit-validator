@@ -8,7 +8,7 @@ Este módulo maneja:
 """
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from app.exceptions.custom_exceptions import XMLParseException
@@ -16,7 +16,7 @@ from app.models.afip_models import LoginTicketRequest, TokenData
 
 
 def build_login_ticket_request(
-    service: str = "ws_sr_padron_a10",
+    service: str = "ws_sr_padron_a13",
     expiration_hours: int = 24
 ) -> str:
     """
@@ -29,21 +29,32 @@ def build_login_ticket_request(
         <generationTime>ISO datetime</generationTime>
         <expirationTime>ISO datetime + N hours</expirationTime>
       </header>
-      <service>ws_sr_padron_a10</service>
+      <service>ws_sr_padron_a13</service>
     </loginTicketRequest>
 
     Args:
-        service: Nombre del servicio AFIP (default: ws_sr_padron_a10)
+        service: Nombre del servicio AFIP (default: ws_sr_padron_a13)
         expiration_hours: Horas de validez del ticket (default: 24)
 
     Returns:
         XML como string UTF-8 sin declaración XML
     """
     try:
-        # Generar timestamps
-        now = datetime.utcnow()
-        generation_time = now.isoformat(timespec='seconds')  # 2024-03-14T10:30:00
-        expiration_time = (now + timedelta(hours=expiration_hours)).isoformat(timespec='seconds')
+        # Generar timestamps en hora de Argentina (UTC-3)
+        # AFIP requiere timestamps con timezone y expiración <= 24 horas
+        argentina_tz = timezone(timedelta(hours=-3))
+        now = datetime.now(argentina_tz)
+        
+        # Formato: 2024-03-14T10:30:00-03:00 (sin milisegundos)
+        generation_time = now.strftime('%Y-%m-%dT%H:%M:%S%z')
+        # Insertar ':' en el timezone offset: -0300 -> -03:00
+        generation_time = generation_time[:-2] + ':' + generation_time[-2:]
+        
+        # Calcular expiración (máximo 24 horas)
+        expiration = now + timedelta(hours=expiration_hours)
+        expiration_time = expiration.strftime('%Y-%m-%dT%H:%M:%S%z')
+        expiration_time = expiration_time[:-2] + ':' + expiration_time[-2:]
+        
         unique_id = str(int(now.timestamp()))  # Unix timestamp como ID único
 
         # Construir XML usando ElementTree
@@ -69,7 +80,7 @@ def build_login_ticket_request(
 
 
 def build_login_ticket_request_model(
-    service: str = "ws_sr_padron_a10",
+    service: str = "ws_sr_padron_a13",
     expiration_hours: int = 24
 ) -> LoginTicketRequest:
     """
@@ -82,7 +93,9 @@ def build_login_ticket_request_model(
     Returns:
         Objeto LoginTicketRequest
     """
-    now = datetime.utcnow()
+    # Usar hora de Argentina (UTC-3)
+    argentina_tz = timezone(timedelta(hours=-3))
+    now = datetime.now(argentina_tz)
     return LoginTicketRequest(
         service=service,
         unique_id=str(int(now.timestamp())),

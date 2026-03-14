@@ -38,5 +38,5 @@ R: Si en python hay una libreria que creas conveniente, usemosla.
    - En memoria (más simple, recomendado inicial)
    - Redis (más robusto, requiere infraestructura adicional)
 R: por el tipo de requerimiento prefiero que sea en memoria.
-5. ¿Qué datos específicos del Padrón A10 te interesan en la respuesta? (nombre, domicilio, actividades, impuestos, etc.)
+5. ¿Qué datos específicos del Padrón A13 te interesan en la respuesta? (nombre, domicilio, actividades, impuestos, etc.)
 R: Nombres y domicilios
