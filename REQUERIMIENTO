@@ -1,0 +1,35 @@
+# [CUIT VALIDATOR ] integrandose con servicios AFIP valida CUIT de personas
+
+**Tipo:** microservicio  
+**Tecnologia:** Python3
+**Protocolo:** FastAPI - JSON REST
+
+---
+
+## Descripción
+
+Necesito que me ayudes a construir un servicio en Python utilizando FASTAPI y una arquitecura simple y concisa 
+(controller  con metodo get - service con metodo get - connector con servicio de auth y get)
+
+### Requerimiento
+```
+(controller  con metodo get - service con metodo get - connector con servicio de auth y get)
+Servicio que se conecte con los servicios de AFIP https://aws.afip.gov.ar/sr-padron/webservices para consultas y https://wsaa.afip.gov.ar/ws/services/LoginCms para autenticación.
+El cual consuma el padron Consulta a Padrón Alcance 10 (documentación https://www.afip.gob.ar/ws/ws_sr_padron_a10/manual_ws_sr_padron_a10_v1.2.pdf )
+Con previa autenticación en serivcio WSAA https://www.afip.gob.ar/ws/documentacion/wsaa.asp con su respectivo manual https://www.afip.gob.ar/ws/WSAA/WSAAmanualDev.pdf
+La arquitectura de comunicación esta detallada en https://www.afip.gob.ar/ws/documentacion/arquitectura-general.asp y https://www.afip.gob.ar/ws/documentacion/catalogo.asp
+
+```
+
+---
+
+## Consideraciones Tecnicas
+- Arquitectura Controller - Service - Component (connector AFIP)
+- Diseñar la obtención del token con una cache interna (con que sea un bean con vencimiento alcanza) 
+- Documentar el comportmiento y generación de secrets en el readme del servicio.
+- Documentar comportamiento en README.md
+- Tener parametrizado TEST y PROD teniendo en cuenta URLs de AFIP
+- Todo valor de parametria tiene que ser obtenido desde un archivo .env
+
+
+---
