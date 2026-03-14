@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     
     def validate_certificates(self) -> None:
         """Valida que los archivos de certificados existan."""
-        if not self.AFIP_CERT_PATH.exists():
+        if not self.AFIP_CERT_PATH.resolve().exists():
             raise FileNotFoundError(f"Certificado no encontrado: {self.AFIP_CERT_PATH}")
         if not self.AFIP_KEY_PATH.exists():
             raise FileNotFoundError(f"Clave privada no encontrada: {self.AFIP_KEY_PATH}")

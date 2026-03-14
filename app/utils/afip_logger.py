@@ -194,6 +194,7 @@ class AFIPRequestLogger:
         operation: str,
         soap_envelope: str,
         url: str,
+        unencrypted_content: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None
     ) -> datetime:
         """
@@ -224,6 +225,9 @@ class AFIPRequestLogger:
         # Truncar SOAP envelope si es muy largo (mantener primeros 2000 chars)
         soap_preview = soap_envelope[:2000] + "..." if len(soap_envelope) > 2000 else soap_envelope
         
+        if unencrypted_content is not None:
+            logger.info(f"Unencrypted SOAP Content:\n{unencrypted_content}")
+
         request_data = {
             "soap_envelope": soap_envelope,
             "soap_preview": soap_preview,
@@ -274,7 +278,8 @@ class AFIPRequestLogger:
         status_code: int,
         soap_response: str,
         headers: Optional[Dict[str, str]] = None,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        unencrypted_content: Optional[str] = None
     ):
         """
         Loggea un SOAP response AFIP (variante para XML).

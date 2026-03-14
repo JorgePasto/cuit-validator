@@ -45,6 +45,9 @@ async def lifespan(app: FastAPI):
         logger.info(f"Environment: {settings.ENVIRONMENT}")
         logger.info(f"WSAA URL: {settings.wsaa_url}")
         logger.info(f"Padrón URL: {settings.padron_url}")
+        logger.info(f"Cert Path: {settings.AFIP_CERT_PATH}")
+        logger.info(f"Key Path: {settings.AFIP_KEY_PATH}")
+        logger.info(f"CUIT: {settings.AFIP_CUIT}")
 
         # Validar certificados
         settings.validate_certificates()
