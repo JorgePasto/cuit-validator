@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  cuit-validator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cuit-validator
+    ports:
+      - "8000:8000"
+    environment:
+      # Configuración del ambiente (TEST o PROD)
+      - ENVIRONMENT=${ENVIRONMENT:-TEST}
+      
+      # Rutas de certificados (dentro del container)
+      - AFIP_CERT_PATH=/app/certs/cert.crt
+      - AFIP_KEY_PATH=/app/certs/private.key
+      - AFIP_KEY_PASSPHRASE=${AFIP_KEY_PASSPHRASE:-}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    
+    volumes:
+      # Montar certificados AFIP desde el host
+      # IMPORTANTE: Colocar certificados en ./certs/ antes de ejecutar
+      - ./certs:/app/certs:ro
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    networks:
+      - cuit-validator-network
+
+networks:
+  cuit-validator-network:
+    driver: bridge
