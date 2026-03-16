@@ -12,6 +12,7 @@ from app.cache.token_cache import cache_token, get_cached_token
 from app.connectors.wsaa_connector import WSAAConnector, get_wsaa_connector
 from app.exceptions.custom_exceptions import AuthenticationException
 from app.models.afip_models import TokenData
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,9 @@ class AuthService:
         """
         self.wsaa_connector = wsaa_connector or get_wsaa_connector()
         self.service_name = self.wsaa_connector.get_service_name()
+        # Lock para evitar llamadas concurrentes a WSAA (thundering herd)
+        # Un lock por instancia/servicio. Usado en get_valid_token cuando se requiere refresh.
+        self._refresh_lock = asyncio.Lock()
 
     async def get_valid_token(self, force_refresh: bool = False) -> TokenData:
         """
@@ -69,13 +73,22 @@ class AuthService:
             # Si no hay cache o se forzó refresh, obtener nuevo token
             logger.info(f"Requesting new token from WSAA for service: {self.service_name}")
 
-            new_token = await self.wsaa_connector.get_token()
+            # Evitar llamadas concurrentes que intenten renovar el token simultáneamente
+            async with self._refresh_lock:
+                # Re-check cache dentro del lock por si otro coroutine ya renovó
+                if not force_refresh:
+                    cached_token = get_cached_token(self.service_name)
+                    if cached_token is not None:
+                        logger.info("Token obtained from cache by concurrent caller")
+                        return cached_token
 
-            # Cachear el nuevo token
-            cache_token(self.service_name, new_token)
-            logger.info(f"New token cached. Expires at: {new_token.expiration_time}")
+                new_token = await self.wsaa_connector.get_token()
 
-            return new_token
+                # Cachear el nuevo token
+                cache_token(self.service_name, new_token)
+                logger.info(f"New token cached. Expires at: {new_token.expiration_time}")
+
+                return new_token
 
         except AuthenticationException:
             # Re-raise authentication errors

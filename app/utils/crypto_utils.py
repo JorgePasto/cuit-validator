@@ -16,6 +16,10 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.serialization import pkcs7
+from datetime import timezone
+import subprocess
+import shutil
+import os
 from OpenSSL import crypto
 
 from app.exceptions.custom_exceptions import CertificateException, SignatureException
@@ -126,9 +130,7 @@ def sign_cms_pkcs7(data: str, private_key, certificate: x509.Certificate) -> byt
         data_bytes = data.encode('utf-8')
 
         # Crear firma CMS usando cryptography (desde v37+)
-        # Opciones de firma:
-        # - Text=False: datos binarios, no texto
-        # - Detached=False: incluir contenido en la firma (lo que requiere AFIP)
+        # Usar attached signature (incluir contenido) ya que AFIP espera el contenido firmado
         options = [pkcs7.PKCS7Options.Binary]
 
         # Crear firma PKCS7
@@ -173,49 +175,25 @@ def sign_cms_pkcs7_legacy(data: str, private_key_path: str, cert_path: str, pass
         SignatureException: Si la firma falla
     """
     try:
-        # Cargar certificado con PyOpenSSL
-        with open(cert_path, "rb") as f:
-            cert = crypto.load_certificate(crypto.FILETYPE_PEM, f.read())
+        # Fallback: intentar usar la utilidad openssl en PATH si cryptography no funciona
+        openssl_path = shutil.which("openssl")
+        if openssl_path:
+            # Usar comando: openssl cms -sign -in /dev/stdin -signer cert.pem -inkey key.pem -outform DER -nodetach
+            cmd = [openssl_path, "cms", "-sign", "-in", "/dev/stdin", "-signer", cert_path, "-inkey", private_key_path, "-outform", "DER", "-nodetach"]
+            if passphrase:
+                # openssl puede recibir passphrase vía environment var; evitamos exponerla en logs
+                env = {**os.environ, "PASS": passphrase}
+            else:
+                env = None
 
-        # Cargar clave privada con PyOpenSSL
-        with open(private_key_path, "rb") as f:
-            key_data = f.read()
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+            out, err = proc.communicate(input=data.encode('utf-8'))
+            if proc.returncode != 0:
+                raise SignatureException(f"OpenSSL cms failed: {err.decode('utf-8')}")
+            return out
 
-        if passphrase:
-            pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, key_data, passphrase.encode())
-        else:
-            pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, key_data)
-
-        # Crear firma PKCS7
-        # PKCS7_BINARY: no realizar conversión de texto
-        # PKCS7_DETACHED: firma independiente del contenido (no usado aquí)
-        flags = crypto.PKCS7_BINARY
-
-        data_bytes = data.encode('utf-8')
-
-        # Firmar datos
-        pkcs7_sig = crypto.sign(pkey, data_bytes, "sha256")
-
-        # Crear estructura PKCS7 completa
-        # Nota: PyOpenSSL tiene limitaciones, usamos crypto.SMIME para crear PKCS7
-        bio_in = crypto._new_mem_buf(data_bytes)
-        pkcs7 = crypto._lib.PKCS7_sign(
-            cert._x509,
-            pkey._pkey,
-            crypto._ffi.NULL,
-            bio_in,
-            flags
-        )
-
-        if pkcs7 == crypto._ffi.NULL:
-            raise SignatureException("Failed to create PKCS7 signature")
-
-        # Convertir a DER
-        bio_out = crypto._new_mem_buf()
-        crypto._lib.i2d_PKCS7_bio(bio_out, pkcs7)
-        pkcs7_der = crypto._bio_to_string(bio_out)
-
-        return pkcs7_der
+        # Si no hay openssl disponible, mantener intento con PyOpenSSL (legacy) pero lanzar excepción clara
+        raise SignatureException("Legacy PKCS7 signing not available: requires openssl in PATH")
 
     except Exception as e:
         raise SignatureException(

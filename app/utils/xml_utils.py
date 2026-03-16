@@ -9,6 +9,7 @@ Este módulo maneja:
 
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+from dateutil import parser as dateutil_parser
 from typing import Optional
 
 from app.exceptions.custom_exceptions import XMLParseException
@@ -45,7 +46,8 @@ def build_login_ticket_request(
         argentina_tz = timezone(timedelta(hours=-3))
         now = datetime.now(argentina_tz)
         
-        # Formato: 2024-03-14T10:30:00-03:00 (sin milisegundos)
+    # Formato: 2024-03-14T10:30:00-03:00 (sin milisegundos)
+        # Generar timezone-aware en UTC-3 y formatear con offset
         generation_time = now.strftime('%Y-%m-%dT%H:%M:%S%z')
         # Insertar ':' en el timezone offset: -0300 -> -03:00
         generation_time = generation_time[:-2] + ':' + generation_time[-2:]
@@ -263,22 +265,30 @@ def parse_afip_timestamp(timestamp_str: str) -> datetime:
     Returns:
         datetime objeto (naive UTC)
     """
-    # Remover milisegundos si existen
-    clean_ts = timestamp_str.split('.')[0]
+    # Usar dateutil para parsear formatos ISO flexibles y conservar offset
+    # Luego normalizar a UTC timezone-aware
+    if timestamp_str is None:
+        raise ValueError("timestamp_str is None")
 
-    # Remover timezone si existe (convertir a UTC es complejo, asumimos UTC)
-    if '+' in clean_ts or clean_ts.count('-') > 2:
-        # Formato: 2024-03-14T10:30:00-03:00
-        clean_ts = clean_ts.rsplit('-', 1)[0] if clean_ts.count('-') > 2 else clean_ts.rsplit('+', 1)[0]
-
-    # Parsear como datetime naive
+    # dateutil.isoparse maneja milisegundos y offsets correctamente
     try:
-        dt = datetime.fromisoformat(clean_ts)
-        return dt
-    except ValueError:
-        # Fallback: intentar formato básico
-        dt = datetime.strptime(clean_ts, "%Y-%m-%dT%H:%M:%S")
-        return dt
+        dt = dateutil_parser.isoparse(timestamp_str)
+    except Exception:
+        # Intentar remover milisegundos y reintentar
+        clean_ts = timestamp_str.split('.')
+        clean_ts = clean_ts[0]
+        try:
+            dt = dateutil_parser.isoparse(clean_ts)
+        except Exception as e:
+            raise
+
+    # Si el datetime es naive, asumir que viene en hora local de Argentina (UTC-3)
+    if dt.tzinfo is None:
+        argentina_tz = timezone(timedelta(hours=-3))
+        dt = dt.replace(tzinfo=argentina_tz)
+
+    # Normalizar a UTC
+    return dt.astimezone(timezone.utc)
 
 
 def extract_soap_fault(xml_response: str) -> Optional[str]:
