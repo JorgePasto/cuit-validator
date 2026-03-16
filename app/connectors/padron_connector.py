@@ -110,13 +110,13 @@ class PadronConnector:
             # Obtener cliente Zeep
             client = self._get_client()
 
-            # Preparar parámetros del request
-            # Basado en el WSDL de Padrón A13, el método es getPersona_v2
+            # Preparar parámetros del request según WSDL (getPersona)
+            # En el WSDL cuitRepresentada e idPersona son tipo long, enviarlos como int
             request_params = {
                 "token": token_data.token,
                 "sign": token_data.sign,
-                "cuitRepresentada": clean_cuit,  # CUIT del certificado (quien consulta)
-                "idPersona": clean_cuit           # CUIT a consultar (para autoconsulta, ambos son iguales)
+                "cuitRepresentada": int(clean_cuit),  # CUIT del certificado (quien consulta)
+                "idPersona": int(clean_cuit)           # CUIT a consultar (para autoconsulta, ambos son iguales)
             }
 
             logger.debug(f"Request params: {request_params}")
@@ -128,8 +128,8 @@ class PadronConnector:
             from datetime import datetime
             start_time = afip_logger.log_request(
                 correlation_id=correlation_id,
-                service="PADRON_A13",
-                operation="getPersona_v2",
+                service="PersonaServiceA13",
+                operation="getPersona",
                 request_data={
                     "cuitRepresentada": clean_cuit,
                     "idPersona": clean_cuit,
@@ -141,8 +141,8 @@ class PadronConnector:
 
             # Llamar al servicio SOAP
             try:
-                # Método del WSDL A13: getPersona_v2 (verificar nombre exacto en WSDL durante testing)
-                response = client.service.getPersona_v2(**request_params)
+                # Método del WSDL A13: getPersona
+                response = client.service.getPersona(**request_params)
 
                 logger.debug(f"Response received for CUIT {clean_cuit}")
                 
@@ -168,8 +168,8 @@ class PadronConnector:
                     
                     afip_logger.log_soap_response(
                         correlation_id=correlation_id,
-                        service="PADRON_A13",
-                        operation="getPersona_v2",
+                        service="PersonaServiceA13",
+                        operation="getPersona",
                         start_time=start_time,
                         status_code=200,
                         soap_response=soap_response_str,
@@ -179,8 +179,8 @@ class PadronConnector:
                     # Fallback si no hay history
                     afip_logger.log_response(
                         correlation_id=correlation_id,
-                        service="PADRON_A13",
-                        operation="getPersona_v2",
+                        service="PersonaServiceA13",
+                        operation="getPersona",
                         start_time=start_time,
                         status_code=200,
                         response_data={"status": "success", "cuit": clean_cuit},
@@ -200,8 +200,8 @@ class PadronConnector:
                 # LOG ERROR RESPONSE
                 afip_logger.log_response(
                     correlation_id=correlation_id,
-                    service="PADRON_A13",
-                    operation="getPersona_v2",
+                    service="PersonaServiceA13",
+                    operation="getPersona",
                     start_time=start_time,
                     status_code=500,
                     response_data={"fault": fault_message, "cuit": clean_cuit},
@@ -226,8 +226,8 @@ class PadronConnector:
                 # LOG ERROR RESPONSE
                 afip_logger.log_response(
                     correlation_id=correlation_id,
-                    service="PADRON_A13",
-                    operation="getPersona_v2",
+                    service="PersonaServiceA13",
+                    operation="getPersona",
                     start_time=start_time,
                     status_code=502,
                     response_data={"error": str(e), "cuit": clean_cuit},
@@ -245,8 +245,8 @@ class PadronConnector:
                 # LOG ERROR RESPONSE
                 afip_logger.log_response(
                     correlation_id=correlation_id,
-                    service="PADRON_A13",
-                    operation="getPersona_v2",
+                    service="PersonaServiceA13",
+                    operation="getPersona",
                     start_time=start_time,
                     status_code=500,
                     response_data={"error": str(e), "cuit": clean_cuit},

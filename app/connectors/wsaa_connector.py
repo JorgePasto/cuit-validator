@@ -9,6 +9,7 @@ import logging
 from typing import Optional
 
 import httpx
+import html
 
 from app.config.settings import Settings
 from app.exceptions.custom_exceptions import (
@@ -171,9 +172,7 @@ class WSAAConnector:
                     content=soap_request.encode('utf-8'),
                     headers=headers
                 )
-
                 logger.debug(f"WSAA response status: {response.status_code}")
-                
                 # LOG RESPONSE
                 response_headers = dict(response.headers)
                 afip_logger.log_soap_response(
@@ -275,8 +274,12 @@ class WSAAConnector:
 
                 # Parsear respuesta XML
                 response_xml = response.text
-                logger.debug(f"Response XML received: {len(response_xml)} bytes")
 
+                # Algunas respuestas vienen con el contenido de <loginCmsReturn>
+                # como XML escapado (&lt; ... &gt;). Para evitar que el parser
+                # reciba el texto 'dañado', unescapeamos aquí antes de parsear.
+                response_unescape_xml = html.unescape(response_xml)
+                logger.debug(f"Response XML received: {response_unescape_xml}")
                 # Verificar si hay SOAP Fault en respuesta 200 (algunos servicios lo hacen)
                 fault_message = extract_soap_fault(response_xml)
                 if fault_message:
@@ -285,7 +288,6 @@ class WSAAConnector:
                         f"AFIP authentication failed: {fault_message}",
                         details={"fault": fault_message}
                     )
-                logger.debug(f"Response XML received NOT FAULT")
                 # Parsear LoginCmsResponse
                 token_data = parse_login_cms_response(response_xml)
 

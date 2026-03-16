@@ -81,7 +81,7 @@ class CUITService:
 
             # PASO 3: Consultar Padrón A10
             try:
-                logger.info(f"Querying CUIT {cuit} in Padrón A10")
+                logger.info(f"Querying CUIT {cuit} in Padrón A13 with token expiring at {token_data.expiration_time}")
                 persona_response = await self.padron_connector.get_persona_by_cuit(
                     cuit=cuit,
                     token_data=token_data

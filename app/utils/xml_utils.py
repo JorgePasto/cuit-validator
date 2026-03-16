@@ -8,6 +8,7 @@ Este módulo maneja:
 """
 
 from asyncio.log import logger
+import html
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -130,17 +131,17 @@ def build_wsaa_soap_envelope(cms_signature_b64: str) -> str:
     return soap_template
 
 
+import html
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
+
 def parse_login_cms_response(xml_response: str) -> TokenData:
     """
     Parsea la respuesta XML de WSAA LoginCms y extrae el TokenData.
 
-    Estructura esperada:
-    <loginCmsReturn>
-      <token>...</token>
-      <sign>...</sign>
-      <generationTime>2024-03-14T10:30:00.000-03:00</generationTime>
-      <expirationTime>2024-03-15T10:30:00.000-03:00</expirationTime>
-    </loginCmsReturn>
+    Soporta dos formatos:
+    1. loginCmsReturn con nodos hijos directos
+    2. loginCmsReturn conteniendo un XML interno escapado como texto
 
     Args:
         xml_response: XML de respuesta completo (SOAP envelope)
@@ -152,33 +153,27 @@ def parse_login_cms_response(xml_response: str) -> TokenData:
         XMLParseException: Si el XML no tiene la estructura esperada
     """
     try:
-        # Parsear XML
         root = ET.fromstring(xml_response)
 
-        # Definir namespaces (SOAP puede tener variaciones)
         namespaces = {
-            'soapenv': 'http://schemas.xmlsoap.org/soap/envelope/',
-            'soap': 'http://schemas.xmlsoap.org/soap/envelope/',
+            "soapenv": "http://schemas.xmlsoap.org/soap/envelope/",
+            "soap": "http://schemas.xmlsoap.org/soap/envelope/",
+            "wsaa": "http://wsaa.view.sua.dvadac.desein.afip.gov",
         }
 
-        # Buscar loginCmsReturn en el Body (sin namespace específico por flexibilidad)
-        # Intentar con y sin namespaces
         login_return = None
 
-        # Intento 1: Con namespace soapenv
-        body = root.find('.//soapenv:Body', namespaces)
+        body = root.find(".//soapenv:Body", namespaces)
         if body is not None:
-            login_return = body.find('.//{*}loginCmsReturn')
+            login_return = body.find(".//{*}loginCmsReturn")
 
-        # Intento 2: Con namespace soap
         if login_return is None:
-            body = root.find('.//soap:Body', namespaces)
+            body = root.find(".//soap:Body", namespaces)
             if body is not None:
-                login_return = body.find('.//{*}loginCmsReturn')
+                login_return = body.find(".//{*}loginCmsReturn")
 
-        # Intento 3: Sin namespace (búsqueda recursiva)
         if login_return is None:
-            login_return = root.find('.//{*}loginCmsReturn')
+            login_return = root.find(".//{*}loginCmsReturn")
 
         if login_return is None:
             raise XMLParseException(
@@ -186,56 +181,104 @@ def parse_login_cms_response(xml_response: str) -> TokenData:
                 details={"xml_snippet": xml_response[:500]}
             )
 
-        # Extraer campos requeridos
-        token = login_return.findtext('token') or login_return.findtext('{*}token')
-        sign = login_return.findtext('sign') or login_return.findtext('{*}sign')
+        # ------------------------------------------------------------------
+        # Caso A: AFIP responde con hijos directos dentro de loginCmsReturn
+        # ------------------------------------------------------------------
+        token = login_return.findtext("token") or login_return.findtext("{*}token")
+        sign = login_return.findtext("sign") or login_return.findtext("{*}sign")
         generation_time_str = (
-            login_return.findtext('generationTime') or 
-            login_return.findtext('{*}generationTime')
+            login_return.findtext("generationTime")
+            or login_return.findtext("{*}generationTime")
         )
         expiration_time_str = (
-            login_return.findtext('expirationTime') or 
-            login_return.findtext('{*}expirationTime')
+            login_return.findtext("expirationTime")
+            or login_return.findtext("{*}expirationTime")
         )
-        logger.debug(f"Parsed loginCmsReturn: token={'found' if token else 'missing'}, sign={'found' if sign else 'missing'}, generationTime={generation_time_str}, expirationTime={expiration_time_str}")
 
-        # Validar campos obligatorios
+        # ------------------------------------------------------------------
+        # Caso B: AFIP responde con XML escapado dentro de loginCmsReturn.text
+        # ------------------------------------------------------------------
+        if not token or not sign:
+            inner_xml_raw = (login_return.text or "").strip()
+
+            if inner_xml_raw:
+                logger.debug(
+                    "loginCmsReturn contains inner XML text, attempting nested parse"
+                )
+
+                # Normalmente ElementTree ya devuelve el texto desescapado,
+                # pero html.unescape acá no rompe porque se aplica SOLO al
+                # fragmento interno, nunca al SOAP completo.
+                inner_xml = html.unescape(inner_xml_raw).strip()
+
+                try:
+                    inner_root = ET.fromstring(inner_xml)
+                except ET.ParseError as inner_exc:
+                    raise XMLParseException(
+                        f"Failed to parse inner loginCmsReturn XML: {str(inner_exc)}",
+                        details={
+                            "inner_xml_snippet": inner_xml[:500],
+                            "login_return": ET.tostring(login_return, encoding="unicode"),
+                        }
+                    )
+
+                token = inner_root.findtext(".//token") or inner_root.findtext(".//{*}token")
+                sign = inner_root.findtext(".//sign") or inner_root.findtext(".//{*}sign")
+                generation_time_str = (
+                    inner_root.findtext(".//generationTime")
+                    or inner_root.findtext(".//{*}generationTime")
+                )
+                expiration_time_str = (
+                    inner_root.findtext(".//expirationTime")
+                    or inner_root.findtext(".//{*}expirationTime")
+                )
+
+        logger.debug(
+            "Parsed loginCmsReturn: token=%s, sign=%s, generationTime=%s, expirationTime=%s",
+            "found" if token else "missing",
+            "found" if sign else "missing",
+            generation_time_str,
+            expiration_time_str,
+        )
+
         if not token:
             raise XMLParseException(
                 "Token not found in loginCmsReturn",
-                details={"login_return": ET.tostring(login_return, encoding='unicode')}
+                details={"login_return": ET.tostring(login_return, encoding="unicode")}
             )
 
         if not sign:
             raise XMLParseException(
                 "Sign not found in loginCmsReturn",
-                details={"login_return": ET.tostring(login_return, encoding='unicode')}
+                details={"login_return": ET.tostring(login_return, encoding="unicode")}
             )
 
-        # Parsear timestamps (formato AFIP: 2024-03-14T10:30:00.000-03:00)
         try:
-            # Limpiar milisegundos y timezone para simplificar parseo
-            generation_time = parse_afip_timestamp(generation_time_str) if generation_time_str else datetime.utcnow()
-            expiration_time = parse_afip_timestamp(expiration_time_str) if expiration_time_str else datetime.utcnow() + timedelta(hours=12)
+            generation_time = (
+                parse_afip_timestamp(generation_time_str)
+                if generation_time_str
+                else datetime.utcnow()
+            )
+            expiration_time = (
+                parse_afip_timestamp(expiration_time_str)
+                if expiration_time_str
+                else datetime.utcnow() + timedelta(hours=12)
+            )
         except Exception as e:
             raise XMLParseException(
                 f"Failed to parse timestamps: {str(e)}",
                 details={
                     "generation_time": generation_time_str,
-                    "expiration_time": expiration_time_str
+                    "expiration_time": expiration_time_str,
                 }
             )
 
-        # Construir TokenData
-        token_data = TokenData(
+        return TokenData(
             token=token,
             sign=sign,
             generation_time=generation_time,
-            expiration_time=expiration_time
+            expiration_time=expiration_time,
         )
-
-        return token_data
-
     except XMLParseException:
         raise
     except ET.ParseError as e:
@@ -248,8 +291,7 @@ def parse_login_cms_response(xml_response: str) -> TokenData:
             f"Failed to parse LoginCmsResponse: {str(e)}",
             details={"error": str(e), "xml_snippet": xml_response[:500]}
         )
-
-
+    
 def parse_afip_timestamp(timestamp_str: str) -> datetime:
     """
     Parsea timestamps de AFIP en formato ISO con timezone.
