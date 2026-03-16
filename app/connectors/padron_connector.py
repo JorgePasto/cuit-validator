@@ -295,10 +295,6 @@ class PadronConnector:
         try:
             logger.debug(f"Parsing response for CUIT {cuit}")
 
-            # Estructura esperada (ajustar según WSDL real):
-            # response.persona.datosGenerales
-            # response.persona.domicilioFiscal
-
             # Verificar que response tenga datos
             if response is None:
                 raise XMLParseException(
@@ -306,34 +302,121 @@ class PadronConnector:
                     details={"cuit": cuit}
                 )
 
-            # Extraer datos generales
-            datos_generales = getattr(response, "datosGenerales", None)
-            if datos_generales is None:
-                raise XMLParseException(
-                    "datosGenerales not found in AFIP response",
-                    details={"cuit": cuit, "response": str(response)[:500]}
-                )
+            # Determinar ambiente (compatibilidad con distintas mayúsculas)
+            env = getattr(self.settings, "ENVIRONMENT", None) or getattr(self.settings, "environment", None)
 
-            # Campos de persona
-            tipo_persona = getattr(datos_generales, "tipoPersona", None)
-            apellido = getattr(datos_generales, "apellido", None)
-            nombre = getattr(datos_generales, "nombre", None)
-            razon_social = getattr(datos_generales, "razonSocial", None)
+            # Caso PROD: algunos endpoints A13 devuelven personaReturn -> persona (estructura mostrada por el usuario)
+            if env and str(env).upper() == "PROD":
+                # Intentar extraer nodo persona desde varias ubicaciones posibles
+                persona_node = None
+                # Caso: response.persona (directo)
+                persona_node = getattr(response, "persona", None)
+                # Caso: response.personaReturn.persona
+                if persona_node is None:
+                    persona_return = getattr(response, "personaReturn", None)
+                    if persona_return is not None:
+                        persona_node = getattr(persona_return, "persona", None)
 
-            # Estado de la clave (activo/inactivo)
-            estado_clave = getattr(datos_generales, "estadoClave", "ACTIVO")
+                # Si aún no existe, intentar buscar dentro de response.persona.persona (por si Zeep anida)
+                if persona_node is None:
+                    nested = getattr(response, "persona", None)
+                    if nested is not None:
+                        persona_node = getattr(nested, "persona", None) or nested
 
-            # Extraer domicilio fiscal
-            domicilio_fiscal_data = getattr(response, "domicilioFiscal", None)
-            domicilio_fiscal = None
+                if persona_node is None:
+                    # No cumple la estructura PROD esperada: fallar con detalle
+                    raise XMLParseException(
+                        "datosGenerales not found in AFIP response (PROD mapping failed)",
+                        details={"cuit": cuit, "response": str(response)[:1000]}
+                    )
 
-            if domicilio_fiscal_data is not None:
-                domicilio_fiscal = DomicilioFiscal(
-                    direccion=getattr(domicilio_fiscal_data, "direccion", None),
-                    localidad=getattr(domicilio_fiscal_data, "localidad", None),
-                    provincia=getattr(domicilio_fiscal_data, "descripcionProvincia", None),
-                    codigo_postal=getattr(domicilio_fiscal_data, "codPostal", None)
-                )
+                # Campos de persona (formato PROD: apellido, nombre, tipoPersona, estadoClave, domicilio)
+                tipo_persona = getattr(persona_node, "tipoPersona", None)
+                apellido = getattr(persona_node, "apellido", None)
+                nombre = getattr(persona_node, "nombre", None)
+                razon_social = getattr(persona_node, "razonSocial", None)
+                estado_clave = getattr(persona_node, "estadoClave", "ACTIVO")
+
+                # Domicilio dentro de persona_node.domicilio (puede venir como lista u objeto)
+                domicilio_fiscal = None
+                domicilio_data = getattr(persona_node, "domicilio", None)
+                if domicilio_data is not None:
+                    # Normalizar si viene como lista
+                    if isinstance(domicilio_data, list):
+                        domicilio_item = domicilio_data[0] if domicilio_data else None
+                    else:
+                        domicilio_item = domicilio_data
+
+                    if domicilio_item is not None:
+                        # Construir `direccion` intentando campos alternativos para evitar pasar None
+                        direccion_val = getattr(domicilio_item, "direccion", None)
+                        if not direccion_val:
+                            calle = getattr(domicilio_item, "calle", None)
+                            numero = getattr(domicilio_item, "numero", None)
+                            # combinar calle y numero si existen
+                            parts = [p for p in (calle, str(numero) if numero is not None else None) if p]
+                            direccion_val = " ".join(parts).strip() if parts else None
+
+                        # Si aun no hay direccion, fallback a cadena vacía para pasar validación; loggear advertencia
+                        if not direccion_val:
+                            logger.warning(f"Domicilio sin 'direccion' para CUIT {cuit}, usando fallback empty string")
+                            direccion_val = ""
+
+                        domicilio_fiscal = DomicilioFiscal(
+                            direccion=direccion_val,
+                            localidad=getattr(domicilio_item, "localidad", None),
+                            provincia=getattr(domicilio_item, "descripcionProvincia", None) or getattr(domicilio_item, "provincia", None),
+                            codigo_postal=getattr(domicilio_item, "codigoPostal", None) or getattr(domicilio_item, "codPostal", None)
+                        )
+                # Si no se encontró domicilio en la respuesta, usar fallback con direccion vacía
+                if domicilio_fiscal is None:
+                    domicilio_fiscal = DomicilioFiscal(direccion="", localidad=None, provincia=None, codigo_postal=None)
+                # Loggeo que se usó el mapping PROD
+                logger.debug(f"Using PROD mapping for Padrón A13 response for CUIT {cuit}")
+
+            else:
+                # Mapeo legacy / no-PROD (mantener compatibilidad)
+                # Extraer datos generales (A10/A13 antiguo)
+                datos_generales = getattr(response, "datosGenerales", None)
+                if datos_generales is None:
+                    raise XMLParseException(
+                        "datosGenerales not found in AFIP response",
+                        details={"cuit": cuit, "response": str(response)[:500]}
+                    )
+
+                # Campos de persona
+                tipo_persona = getattr(datos_generales, "tipoPersona", None)
+                apellido = getattr(datos_generales, "apellido", None)
+                nombre = getattr(datos_generales, "nombre", None)
+                razon_social = getattr(datos_generales, "razonSocial", None)
+
+                # Estado de la clave (activo/inactivo)
+                estado_clave = getattr(datos_generales, "estadoClave", "ACTIVO")
+                logger.debug(f"Extracted datosGenerales for CUIT {cuit}: tipo_persona={tipo_persona}, apellido={apellido}, nombre={nombre}, razon_social={razon_social}, estado_clave={estado_clave}")
+                # Extraer domicilio fiscal según formato legacy
+                domicilio_fiscal = None
+                domicilio_fiscal_data = getattr(datos_generales, "domicilio", None) or getattr(response, "domicilioFiscal", None)
+                logger.debug(f"Extracted datosGenerales domicilio data for CUIT {cuit}: {domicilio_fiscal_data}")
+                if domicilio_fiscal_data is not None:
+                    # domicilio_fiscal_data puede venir como objeto o lista; normalizar
+                    if isinstance(domicilio_fiscal_data, list):
+                        domicilio_item = domicilio_fiscal_data[0] if domicilio_fiscal_data else None
+                    else:
+                        domicilio_item = domicilio_fiscal_data
+
+                    direccion_val = getattr(domicilio_item, "direccion", None)
+                    if not direccion_val:
+                        calle = getattr(domicilio_item, "calle", None)
+                        numero = getattr(domicilio_item, "numero", None)
+                        parts = [p for p in (calle, str(numero) if numero is not None else None) if p]
+                        direccion_val = " ".join(parts).strip() if parts else ""
+
+                    domicilio_fiscal = DomicilioFiscal(
+                        direccion=direccion_val,
+                        localidad=getattr(domicilio_item, "localidad", None),
+                        provincia=getattr(domicilio_item, "descripcionProvincia", None) or getattr(domicilio_item, "provincia", None),
+                        codigo_postal=getattr(domicilio_item, "codigoPostal", None) or getattr(domicilio_item, "codPostal", None)
+                    )
 
             # Loggear el response completo de A13 para debugging/auditoría
             self._log_full_a13_response(cuit, response)
