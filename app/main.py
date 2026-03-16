@@ -18,9 +18,14 @@ from app.controllers.cuit_controller import router as cuit_router
 from app.exceptions.custom_exceptions import AFIPBaseException
 from app.models.responses import ErrorResponse
 
-# Configurar logging
+# Cargar configuración antes de inicializar logging para respetar LOG_LEVEL
+settings = Settings()
+
+# Configurar logging usando el nivel definido en `.env` o el valor por defecto
+log_level_name = (settings.LOG_LEVEL or "INFO").upper()
+log_level = getattr(logging, log_level_name, logging.INFO)
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
@@ -228,14 +233,11 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
 
-    # Cargar configuración
-    settings = Settings()
-
     # Ejecutar servidor
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
         port=8000,
         reload=settings.ENVIRONMENT == "TEST",  # Hot reload solo en TEST
-        log_level="info"
+        log_level=(settings.LOG_LEVEL or "INFO").lower()
     )

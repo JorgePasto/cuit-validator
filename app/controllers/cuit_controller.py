@@ -88,7 +88,6 @@ async def get_cuit(
     """
     try:
         logger.info(f"Received request for CUIT: {cuit}")
-
         # Consultar CUIT
         persona_response = await service.get_persona_by_cuit(cuit)
 

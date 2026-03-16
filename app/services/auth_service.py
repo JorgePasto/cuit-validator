@@ -35,9 +35,8 @@ class AuthService:
             wsaa_connector: Connector WSAA (opcional, usa singleton si no se provee)
         """
         self.wsaa_connector = wsaa_connector or get_wsaa_connector()
-        self.service_name = self.wsaa_connector.get_service_name()
 
-    async def get_valid_token(self, force_refresh: bool = False) -> TokenData:
+    async def get_valid_token(self, force_refresh: bool = False, service_name: Optional[str] = None) -> TokenData:
         """
         Obtiene un token válido de WSAA (usa cache si está disponible).
 
@@ -60,19 +59,18 @@ class AuthService:
         try:
             # Si no se fuerza refresh, intentar obtener del cache
             if not force_refresh:
-                cached_token = get_cached_token(self.service_name)
+                cached_token = get_cached_token(service_name)
                 if cached_token is not None:
-                    logger.info(f"Using cached token for service: {self.service_name}")
+                    logger.info(f"Using cached token for service: {service_name}")
                     logger.debug(f"Token expires at: {cached_token.expiration_time}")
                     return cached_token
 
             # Si no hay cache o se forzó refresh, obtener nuevo token
-            logger.info(f"Requesting new token from WSAA for service: {self.service_name}")
-
-            new_token = await self.wsaa_connector.get_token()
+            logger.info(f"Requesting new token from WSAA for service: {service_name}")
+            new_token = await self.wsaa_connector.get_token(service_name=service_name)
 
             # Cachear el nuevo token
-            cache_token(self.service_name, new_token)
+            cache_token(service_name, new_token)
             logger.info(f"New token cached. Expires at: {new_token.expiration_time}")
 
             return new_token
@@ -84,10 +82,10 @@ class AuthService:
             logger.error(f"Unexpected error in get_valid_token: {str(e)}")
             raise AuthenticationException(
                 f"Failed to obtain valid WSAA token: {str(e)}",
-                details={"service": self.service_name, "error": str(e)}
+                details={"service": service_name, "error": str(e)}
             )
 
-    async def refresh_token(self) -> TokenData:
+    async def refresh_token(self, service_name: Optional[str] = None) -> TokenData:
         """
         Fuerza la renovación del token (ignora cache).
 
@@ -97,23 +95,25 @@ class AuthService:
         Raises:
             AuthenticationException: Error obteniendo token
         """
-        logger.info(f"Force refreshing token for service: {self.service_name}")
-        return await self.get_valid_token(force_refresh=True)
+        logger.info(f"Force refreshing token for service: {service_name}")
+        return await self.get_valid_token(force_refresh=True, service_name=service_name)
 
-    def get_cached_token_info(self) -> Optional[dict]:
+    def get_cached_token_info(self, service_name: Optional[str] = None) -> Optional[dict]:
         """
         Obtiene información del token cacheado (sin renovar).
 
         Returns:
             Dict con información del token o None si no existe en cache
         """
-        cached_token = get_cached_token(self.service_name)
+        used_service = service_name if service_name else self.wsaa_connector.get_service_name()
+
+        cached_token = get_cached_token(used_service)
 
         if cached_token is None:
             return None
 
         return {
-            "service": self.service_name,
+            "service": used_service,
             "generation_time": cached_token.generation_time.isoformat(),
             "expiration_time": cached_token.expiration_time.isoformat(),
             "token_length": len(cached_token.token),

@@ -61,7 +61,7 @@ class WSAAConnector:
                 details={"error": str(e)}
             )
 
-    async def get_token(self) -> TokenData:
+    async def get_token(self, service_name: Optional[str] = None) -> TokenData:
         """
         Obtiene un nuevo token de AFIP WSAA.
 
@@ -82,11 +82,12 @@ class WSAAConnector:
             AFIPServiceException: Error de comunicación con AFIP
         """
         try:
-            logger.info(f"Requesting new WSAA token for service: {self.service_name}")
+            used_service = service_name if service_name else self.service_name
+            logger.info(f"Requesting new WSAA token for service: {used_service}")
 
             # PASO 1: Generar LoginTicketRequest XML
-            login_ticket_xml = build_login_ticket_request(service=self.service_name)
-            logger.debug(f"Generated LoginTicketRequest: {login_ticket_xml[:200]}...")
+            login_ticket_xml = build_login_ticket_request(service=used_service)
+            logger.debug(f"Generated LoginTicketRequest: {login_ticket_xml}")
 
             # PASO 2: Firmar con CMS/PKCS#7 y codificar en Base64
             try:
@@ -284,7 +285,7 @@ class WSAAConnector:
                         f"AFIP authentication failed: {fault_message}",
                         details={"fault": fault_message}
                     )
-
+                logger.debug(f"Response XML received NOT FAULT")
                 # Parsear LoginCmsResponse
                 token_data = parse_login_cms_response(response_xml)
 

@@ -7,6 +7,7 @@ Este módulo maneja:
 - Construcción de SOAP envelopes
 """
 
+from asyncio.log import logger
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -196,6 +197,7 @@ def parse_login_cms_response(xml_response: str) -> TokenData:
             login_return.findtext('expirationTime') or 
             login_return.findtext('{*}expirationTime')
         )
+        logger.debug(f"Parsed loginCmsReturn: token={'found' if token else 'missing'}, sign={'found' if sign else 'missing'}, generationTime={generation_time_str}, expirationTime={expiration_time_str}")
 
         # Validar campos obligatorios
         if not token:

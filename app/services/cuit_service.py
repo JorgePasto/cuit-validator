@@ -46,6 +46,8 @@ class CUITService:
         """
         self.auth_service = auth_service or get_auth_service()
         self.padron_connector = padron_connector or get_padron_connector()
+        # Nombre del servicio WSAA utilizado para consultar el Padrón A13
+        self.service_name = "ws_sr_padron_a13"
 
     async def get_persona_by_cuit(self, cuit: str) -> PersonaResponse:
         """
@@ -75,7 +77,7 @@ class CUITService:
 
             # PASO 2: Obtener token válido
             logger.info(f"Getting valid WSAA token for CUIT query: {cuit}")
-            token_data = await self.auth_service.get_valid_token()
+            token_data = await self.auth_service.get_valid_token(service_name=self.service_name)
 
             # PASO 3: Consultar Padrón A10
             try:
@@ -96,7 +98,7 @@ class CUITService:
                 )
 
                 # Obtener token nuevo (force refresh)
-                token_data = await self.auth_service.refresh_token()
+                token_data = await self.auth_service.refresh_token(service_name=self.service_name)
 
                 # Reintentar consulta
                 logger.info(f"Retrying CUIT {cuit} query with fresh token")

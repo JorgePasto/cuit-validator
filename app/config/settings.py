@@ -37,11 +37,15 @@ class Settings(BaseSettings):
     PORT: int = 8000
     HOST: str = "0.0.0.0"
     
+    # Use an absolute path to the .env file located at the project root so
+    # loading works regardless of the current working directory when the
+    # module is imported.
+    _PROJECT_ROOT = Path(__file__).resolve().parents[2]
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
-        extra="ignore"
+        extra="ignore",
     )
     
     @property
@@ -61,9 +65,9 @@ class Settings(BaseSettings):
     
     def validate_certificates(self) -> None:
         """Valida que los archivos de certificados existan."""
-        if not self.AFIP_CERT_PATH.resolve().exists():
+        if not Path(self.AFIP_CERT_PATH).resolve().exists():
             raise FileNotFoundError(f"Certificado no encontrado: {self.AFIP_CERT_PATH}")
-        if not self.AFIP_KEY_PATH.exists():
+        if not Path(self.AFIP_KEY_PATH).resolve().exists():
             raise FileNotFoundError(f"Clave privada no encontrada: {self.AFIP_KEY_PATH}")
 
 
