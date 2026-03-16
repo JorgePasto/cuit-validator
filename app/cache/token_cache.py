@@ -7,7 +7,7 @@ tokens AFIP WSAA que son válidos por ~12 horas.
 No utiliza Redis para mantener la simplicidad del microservicio.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from cachetools import TTLCache
@@ -115,19 +115,15 @@ class TokenCache:
         Returns:
             True si el token es válido, False si expiró
         """
-        # Usar timezone-aware UTC para comparaciones
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
 
         # Agregar margen de seguridad de 5 minutos antes de la expiración
+        # para evitar race conditions
         safety_margin_seconds = 300
 
-        expiration = token_data.expiration_time
-        # Asegurar que expiration sea timezone-aware; si no, asumir UTC
-        if expiration.tzinfo is None:
-            expiration = expiration.replace(tzinfo=timezone.utc)
-
         # Comparar con expiration_time menos el margen
-        if (expiration - now).total_seconds() > safety_margin_seconds:
+        expiration_with_margin = token_data.expiration_time
+        if (expiration_with_margin - now).total_seconds() > safety_margin_seconds:
             return True
 
         return False

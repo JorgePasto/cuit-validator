@@ -16,7 +16,6 @@ pydantic-settings==2.1.0
 # Cryptography
 cryptography==41.0.7
 pyopenssl==23.3.0
-python-dateutil==2.8.2
 
 # Caching
 cachetools==5.3.2
