@@ -4,7 +4,7 @@
 FROM python:3.11-slim
 
 # Metadata
-LABEL maintainer="BDS DevOps Team"
+LABEL maintainer="DevOps Team"
 LABEL description="CUIT Validator Microservice - AFIP Integration"
 LABEL version="1.0.0"
 

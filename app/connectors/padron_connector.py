@@ -112,11 +112,12 @@ class PadronConnector:
 
             # Preparar parámetros del request según WSDL (getPersona)
             # En el WSDL cuitRepresentada e idPersona son tipo long, enviarlos como int
+            # cuitRepresentada es siempre el CUIT del certificado (variable de entorno AFIP_CUIT)
             request_params = {
                 "token": token_data.token,
                 "sign": token_data.sign,
-                "cuitRepresentada": int(clean_cuit),  # CUIT del certificado (quien consulta)
-                "idPersona": int(clean_cuit)           # CUIT a consultar (para autoconsulta, ambos son iguales)
+                "cuitRepresentada": int(self.settings.AFIP_CUIT),
+                "idPersona": int(clean_cuit)
             }
 
             logger.debug(f"Request params: {request_params}")
@@ -131,7 +132,7 @@ class PadronConnector:
                 service="PersonaServiceA13",
                 operation="getPersona",
                 request_data={
-                    "cuitRepresentada": clean_cuit,
+                    "cuitRepresentada": self.settings.AFIP_CUIT,
                     "idPersona": clean_cuit,
                     "token_length": len(token_data.token),
                     "sign_length": len(token_data.sign)
