@@ -20,7 +20,7 @@ from app.exceptions.custom_exceptions import (
     XMLParseException
 )
 from app.models.afip_models import TokenData
-from app.models.responses import DomicilioFiscal, PersonaResponse
+from app.models.responses import DomicilioFiscal, PersonaResponse, PersonaSummaryResponse
 from app.utils.afip_logger import afip_logger
 
 logger = logging.getLogger(__name__)
@@ -444,6 +444,237 @@ class PadronConnector:
                 f"Failed to parse persona response: {str(e)}",
                 details={"cuit": cuit, "error": str(e), "response": str(response)[:500]}
             )
+
+    async def get_id_persona_list_by_documento(
+        self,
+        documento: str,
+        token_data: TokenData
+    ) -> list[int]:
+        """
+        Consulta la lista de idPersona (CUITs) asociados a un número de documento (DNI).
+
+        Args:
+            documento: Número de DNI a consultar
+            token_data: Token de autenticación WSAA
+
+        Returns:
+            Lista de idPersona (enteros) devueltos por el servicio
+
+        Raises:
+            AFIPServiceException: Error de comunicación con AFIP
+            XMLParseException: Error parseando respuesta
+        """
+        try:
+            clean_doc = documento.strip()
+            logger.info(f"Querying Padrón A13 for documento: {clean_doc}")
+
+            client = self._get_client()
+
+            # cuitRepresentada es el CUIT del certificado (quien consulta)
+            cuit_representada = int(self.settings.AFIP_CUIT)
+
+            request_params = {
+                "token": token_data.token,
+                "sign": token_data.sign,
+                "cuitRepresentada": cuit_representada,
+                "documento": clean_doc,
+            }
+
+            logger.debug(f"getIdPersonaListByDocumento request params: {request_params}")
+
+            correlation_id = afip_logger.generate_correlation_id()
+            start_time = afip_logger.log_request(
+                correlation_id=correlation_id,
+                service="PersonaServiceA13",
+                operation="getIdPersonaListByDocumento",
+                request_data={
+                    "cuitRepresentada": str(cuit_representada),
+                    "documento": clean_doc,
+                    "token_length": len(token_data.token),
+                    "sign_length": len(token_data.sign),
+                },
+                url=self.padron_url,
+            )
+
+            try:
+                response = client.service.getIdPersonaListByDocumento(**request_params)
+
+                logger.debug(f"getIdPersonaListByDocumento response for documento {clean_doc}: {response}")
+
+                # Capturar SOAP request/response
+                soap_request = None
+                soap_response = None
+                if self.history.last_sent:
+                    soap_request = self.history.last_sent.get("envelope")
+                if self.history.last_received:
+                    soap_response = self.history.last_received.get("envelope")
+
+                if soap_request:
+                    from lxml import etree
+                    soap_req_str = etree.tostring(soap_request, encoding="unicode", pretty_print=True)
+                    logger.debug(f"[{correlation_id}] SOAP Request:\n{soap_req_str}")
+
+                if soap_response:
+                    from lxml import etree
+                    soap_resp_str = etree.tostring(soap_response, encoding="unicode", pretty_print=True)
+                    logger.debug(f"[{correlation_id}] SOAP Response:\n{soap_resp_str}")
+                    afip_logger.log_soap_response(
+                        correlation_id=correlation_id,
+                        service="PersonaServiceA13",
+                        operation="getIdPersonaListByDocumento",
+                        start_time=start_time,
+                        status_code=200,
+                        soap_response=soap_resp_str,
+                        error=None,
+                    )
+                else:
+                    afip_logger.log_response(
+                        correlation_id=correlation_id,
+                        service="PersonaServiceA13",
+                        operation="getIdPersonaListByDocumento",
+                        start_time=start_time,
+                        status_code=200,
+                        response_data={"status": "success", "documento": clean_doc},
+                        error=None,
+                    )
+
+                # Extraer lista de idPersona
+                id_persona_list = self._parse_id_persona_list_response(clean_doc, response)
+                return id_persona_list
+
+            except ZeepFault as e:
+                fault_message = str(e)
+                logger.warning(f"SOAP Fault for documento {clean_doc}: {fault_message}")
+                afip_logger.log_response(
+                    correlation_id=correlation_id,
+                    service="PersonaServiceA13",
+                    operation="getIdPersonaListByDocumento",
+                    start_time=start_time,
+                    status_code=500,
+                    response_data={"fault": fault_message, "documento": clean_doc},
+                    error=fault_message,
+                )
+                raise AFIPServiceException(
+                    f"AFIP service error: {fault_message}",
+                    details={"documento": clean_doc, "fault": fault_message},
+                )
+
+            except TransportError as e:
+                logger.error(f"Transport error querying documento {clean_doc}: {str(e)}")
+                afip_logger.log_response(
+                    correlation_id=correlation_id,
+                    service="PersonaServiceA13",
+                    operation="getIdPersonaListByDocumento",
+                    start_time=start_time,
+                    status_code=502,
+                    response_data={"error": str(e), "documento": clean_doc},
+                    error=f"Transport error: {str(e)}",
+                )
+                raise AFIPServiceException(
+                    f"Network error calling AFIP Padrón: {str(e)}",
+                    details={"documento": clean_doc, "error": str(e)},
+                )
+
+            except XMLParseError as e:
+                logger.error(f"XML parse error for documento {clean_doc}: {str(e)}")
+                afip_logger.log_response(
+                    correlation_id=correlation_id,
+                    service="PersonaServiceA13",
+                    operation="getIdPersonaListByDocumento",
+                    start_time=start_time,
+                    status_code=500,
+                    response_data={"error": str(e), "documento": clean_doc},
+                    error=f"XML parse error: {str(e)}",
+                )
+                raise XMLParseException(
+                    f"Failed to parse AFIP response: {str(e)}",
+                    details={"documento": clean_doc, "error": str(e)},
+                )
+
+        except (AFIPServiceException, XMLParseException):
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error querying documento {documento}: {str(e)}")
+            raise AFIPServiceException(
+                f"Unexpected error querying by documento: {str(e)}",
+                details={"documento": documento, "error": str(e)},
+            )
+
+    def _parse_id_persona_list_response(self, documento: str, response) -> list[int]:
+        """
+        Parsea la respuesta de getIdPersonaListByDocumento.
+
+        Args:
+            documento: Número de documento consultado
+            response: Respuesta del servicio (objeto Zeep)
+
+        Returns:
+            Lista de idPersona como enteros
+
+        Raises:
+            XMLParseException: Si la respuesta no tiene el formato esperado
+        """
+        try:
+            if response is None:
+                logger.warning(f"Empty response from getIdPersonaListByDocumento for documento {documento}")
+                return []
+
+            # Zeep puede devolver el response de dos formas según el WSDL binding:
+            # 1. response.idPersonaListReturn.idPersona  (getIdPersonaListByDocumentoResponse wrapeado)
+            # 2. response.idPersona                      (Zeep hace unwrap y response ES idPersonaListReturn)
+            id_persona_list_return = getattr(response, "idPersonaListReturn", None)
+            if id_persona_list_return is not None:
+                # Caso 1: respuesta wrapeada en getIdPersonaListByDocumentoResponse
+                id_personas = getattr(id_persona_list_return, "idPersona", None)
+            else:
+                # Caso 2: Zeep devolvió idPersonaListReturn directamente como response
+                id_personas = getattr(response, "idPersona", None)
+                if id_personas is not None:
+                    logger.debug(f"Zeep unwrapped idPersonaListReturn directly for documento {documento}")
+                else:
+                    logger.warning(f"No idPersona found in response for documento {documento}. Response: {response}")
+                    return []
+
+            if not id_personas:
+                logger.info(f"No idPersona found for documento {documento}")
+                return []
+
+            # Normalizar a lista
+            if not isinstance(id_personas, list):
+                id_personas = [id_personas]
+
+            # Filtrar nulos y convertir a int
+            result = [int(p) for p in id_personas if p is not None]
+            logger.info(f"Found {len(result)} personas for documento {documento}: {result}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error parsing idPersonaListReturn for documento {documento}: {str(e)}")
+            raise XMLParseException(
+                f"Failed to parse idPersonaListReturn response: {str(e)}",
+                details={"documento": documento, "error": str(e)},
+            )
+
+    def _parse_persona_summary(self, cuit: str, response) -> PersonaSummaryResponse:
+        """
+        Parsea un PersonaResponse (de getPersona) a PersonaSummaryResponse (sin domicilio).
+
+        Args:
+            cuit: CUIT consultado (string de 11 dígitos)
+            response: Respuesta del servicio (objeto Zeep)
+
+        Returns:
+            PersonaSummaryResponse con datos básicos del contribuyente
+        """
+        full_persona = self._parse_persona_response(cuit, response)
+        return PersonaSummaryResponse(
+            cuit=full_persona.cuit,
+            tipo_persona=full_persona.tipo_persona,
+            apellido=full_persona.apellido,
+            nombre=full_persona.nombre,
+            razon_social=full_persona.razon_social,
+            estado_clave=full_persona.estado_clave,
+        )
 
     def _log_full_a13_response(self, cuit: str, response) -> None:
         """

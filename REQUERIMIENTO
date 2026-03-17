@@ -49,3 +49,58 @@
     ---
     ## Nuevo endpoint
       Por mi nivel de CLave en AFIP no puedo consultar el servicio desarrollado, podrias analizar https://www.afip.gob.ar/ws/ws-padron-a13/manual-ws-sr-padron-a13-v1.3.pdf y ver si este servicio sirve, en caso de serlo armar plan de adecuación del servicio actual para poder implementar este cambio
+  
+  
+    ---
+    ## Nuevo endpoint Consulta por DNI
+      En base al archivo PersonaServiceA13.wsdl podriamos determinar que existe una funcionalidad getIdPersonaListByDocumento. Me gustaria que implementemos un metodo a nivel controller que haga lo siguiente:
+      "/dni/{dni}"
+      El cual reciba un DNI por parametro, invoque al service dni service que utilice PadronConnector invocando al metodo indicado del WSDL. Luego, orqueste por cada CUIT idPersonaListReturn.idPersona de la respuesta para poder asi ir recolectando los datos de las personas devueltas, a excepción de direcciones, para este caso no es necesario.
+       Dejo un ejemplo de como se comporta el servicio AFIP
+        REQ
+       <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:a13="http://a13.soap.ws.server.puc.sr/">
+        <soapenv:Header/>
+        <soapenv:Body>
+        <a13:getIdPersonaListByDocumento>
+        <token>${tokensign#token}</token>
+        <sign>${tokensign#sign}</sign>
+        <cuitRepresentada>${parametros#cuit_representada}</cuitRepresentada>
+        <documento>0011709676</documento>
+        </a13:getIdPersonaListByDocumento>
+        Manual Consulta a Padrón – Alcance 13 – V.1.3 Pág. 13 de 20
+        </soapenv:Body>
+        </soapenv:Envelope>
+        RSP
+        <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+        <ns2:getIdPersonaListByDocumentoResponse xmlns:ns2="http://a13.soap.ws.server.puc.sr/">
+        <idPersonaListReturn>
+        <idPersona>23117096769</idPersona>
+        <idPersona>27117096764</idPersona>
+        <metadata>
+        <fechaHora>2025-07-17T16:22:09.168-03:00</fechaHora>
+        <servidor>qa-sr-padron-ws.cloudhomo.afip.gob.ar</servidor>
+        </metadata>
+        </idPersonaListReturn>
+        </ns2:getIdPersonaListByDocumentoResponse>
+        </soap:Body>
+        </soap:Envelope>
+
+        Y como deberia ser la respuesta de nuestro servicio:
+        [
+        {
+          "cuit": "20351798239",
+          "tipo_persona": "FISICA",
+          "apellido": "PASTORINO",
+          "nombre": "JORGE ANTONIO",
+          "estado_clave": "ACTIVO"
+        },{
+          "cuit": "20351798239",
+          "tipo_persona": "FISICA",
+          "apellido": "PASTORINO",
+          "nombre": "JORGE ANTONIO",
+          "estado_clave": "ACTIVO"
+        }
+        ]
+
+        Mantener criterios de integración, orquestación y logs de los servicios ya implementados.

@@ -23,8 +23,9 @@ from app.exceptions.custom_exceptions import (
     InvalidCUITException
 )
 from app.models.requests import CUITRequest
-from app.models.responses import ErrorResponse, HealthResponse, PersonaResponse
+from app.models.responses import ErrorResponse, HealthResponse, PersonaResponse, PersonaSummaryResponse
 from app.services.cuit_service import CUITService, get_cuit_service
+from app.services.dni_service import DNIService, get_dni_service
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,11 @@ router = APIRouter(prefix="/cuit-validator/v1", tags=["cuit"])
 def get_service() -> CUITService:
     """Dependency injection para CUITService."""
     return get_cuit_service()
+
+
+def get_dni_service_dep() -> DNIService:
+    """Dependency injection para DNIService."""
+    return get_dni_service()
 
 
 @router.get("/health", response_model=HealthResponse, status_code=status.HTTP_200_OK)
@@ -195,6 +201,71 @@ async def validate_cuit_post(
     """
     # Reutilizar la lógica del endpoint GET
     return await get_cuit(cuit=request.cuit, service=service)
+
+
+@router.get(
+    "/dni/{dni}",
+    response_model=list[PersonaSummaryResponse],
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"description": "Personas encontradas para el DNI"},
+        401: {"model": ErrorResponse, "description": "Error de autenticación con AFIP"},
+        500: {"model": ErrorResponse, "description": "Error interno del servidor"},
+        503: {"model": ErrorResponse, "description": "Servicio AFIP no disponible"},
+    },
+)
+async def get_personas_by_dni(
+    dni: str = Path(..., description="Número de DNI a consultar", example="30123456"),
+    service: DNIService = Depends(get_dni_service_dep),
+) -> list[PersonaSummaryResponse]:
+    """
+    Consulta las personas asociadas a un número de DNI en AFIP Padrón A13.
+
+    Retorna una lista de personas con datos básicos:
+    - CUIT
+    - Tipo de persona (física/jurídica)
+    - Nombre y apellido (persona física) o razón social (jurídica)
+    - Estado de la clave (ACTIVO/INACTIVO)
+
+    **Ejemplo**: `/dni/30123456`
+    """
+    try:
+        logger.info(f"Received request for DNI: {dni}")
+        personas = await service.get_personas_by_dni(dni)
+        return personas
+
+    except AuthenticationException as e:
+        logger.error(f"Authentication failed for DNI {dni}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ErrorResponse(
+                detail=str(e),
+                error_code="AUTHENTICATION_FAILED",
+                timestamp=datetime.utcnow(),
+            ).model_dump(mode="json"),
+        )
+
+    except AFIPServiceException as e:
+        logger.error(f"AFIP service error for DNI {dni}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=ErrorResponse(
+                detail="AFIP service is temporarily unavailable",
+                error_code="SERVICE_UNAVAILABLE",
+                timestamp=datetime.utcnow(),
+            ).model_dump(mode="json"),
+        )
+
+    except Exception as e:
+        logger.error(f"Unexpected error for DNI {dni}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=ErrorResponse(
+                detail="Internal server error",
+                error_code="INTERNAL_ERROR",
+                timestamp=datetime.utcnow(),
+            ).model_dump(mode="json"),
+        )
 
 
 @router.get(

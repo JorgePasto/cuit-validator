@@ -64,6 +64,29 @@ class PersonaResponse(BaseModel):
         }
 
 
+class PersonaSummaryResponse(BaseModel):
+    """Respuesta resumida de persona por DNI (sin domicilio fiscal)."""
+
+    cuit: str = Field(..., description="CUIT del contribuyente")
+    tipo_persona: Literal["FISICA", "JURIDICA"] = Field(..., description="Tipo de persona")
+    apellido: Optional[str] = Field(None, description="Apellido (persona física)")
+    nombre: Optional[str] = Field(None, description="Nombre (persona física)")
+    razon_social: Optional[str] = Field(None, description="Razón social (persona jurídica)")
+    estado_clave: str = Field(..., description="Estado de la clave fiscal (ACTIVO/INACTIVO)")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "cuit": "20351798239",
+                "tipo_persona": "FISICA",
+                "apellido": "PASTORINO",
+                "nombre": "JORGE ANTONIO",
+                "razon_social": None,
+                "estado_clave": "ACTIVO"
+            }
+        }
+
+
 class ErrorResponse(BaseModel):
     """Respuesta de error estandarizada."""
     
